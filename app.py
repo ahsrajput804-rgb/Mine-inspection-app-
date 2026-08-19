@@ -54,7 +54,7 @@ def generate_pdf(data):
     pdf.cell(0, 6, f"{data['co']} ppm", ln=True)
     pdf.ln(8)
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 # -----------------------------------------
 # 2. Streamlit UI & Form
