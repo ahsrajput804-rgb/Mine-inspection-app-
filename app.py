@@ -11,7 +11,7 @@ def generate_pdf(data):
     
     # Add Company Logo (Ensure 'logo.png' is in your working directory)
     try:
-        pdf.image("logo.png", x=10, y=8, w=30)
+        pdf.image("image(4).jpeg", x=10, y=8, w=30)
     except FileNotFoundError:
         pass # Skips the logo if the file isn't found during testing
 
