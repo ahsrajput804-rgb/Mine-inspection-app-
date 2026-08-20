@@ -2,18 +2,26 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import json
+import hashlib
+import base64
 from datetime import datetime
 from fpdf import FPDF
 
 # -----------------------------------------
-# 1. Database Initialization
+# 1. Database & Security Initialization
 # -----------------------------------------
 DB_FILE = "mine_secure_history.db"
 
+def hash_password(password):
+    """Encrypts the password before saving to the database."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def init_db():
-    """Creates a secure SQLite database table if it doesn't exist."""
+    """Creates secure SQLite database tables if they don't exist."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Table for Inspections
     c.execute('''CREATE TABLE IF NOT EXISTS inspections
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   date TEXT,
@@ -25,14 +33,43 @@ def init_db():
                   co REAL,
                   temperature REAL,
                   full_report_json TEXT)''')
+                  
+    # Table for Users
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (username TEXT PRIMARY KEY,
+                  password TEXT)''')
+                  
     conn.commit()
     conn.close()
+
+def create_user(username, password):
+    """Registers a new user."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hash_password(password)))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False # Username already exists
+    finally:
+        conn.close()
+
+def authenticate_user(username, password):
+    """Checks if username and password match."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE username=?", (username,))
+    result = c.fetchone()
+    conn.close()
+    if result and result[0] == hash_password(password):
+        return True
+    return False
 
 def save_report_to_db(data):
     """Saves the submitted report to the secure database."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Save the key metrics for analytics, and the full dictionary as JSON for PDF recreation
     c.execute('''INSERT INTO inspections 
                  (date, shift, mine_name, inspector, prod_per_day, ch4, co, temperature, full_report_json)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
@@ -60,7 +97,7 @@ def load_history_data():
 init_db()
 
 # -----------------------------------------
-# 2. Custom PDF Class
+# 2. Custom PDF Class & PDF Viewer
 # -----------------------------------------
 class MinePDF(FPDF):
     def header(self):
@@ -200,43 +237,75 @@ def generate_pdf(data):
 
     return bytes(pdf.output())
 
+def display_pdf(pdf_bytes):
+    """Embeds the PDF directly into the Streamlit app layout."""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+    st.markdown(pdf_display, unsafe_allow_html=True)
+
 # -----------------------------------------
-# 3. Security / Login System
+# 3. Security / Login & Registration System
 # -----------------------------------------
 st.set_page_config(page_title="Mine Management Portal", layout="wide")
 
-# Check if user is logged in
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
+if 'current_user' not in st.session_state:
+    st.session_state['current_user'] = ""
 
 if not st.session_state['logged_in']:
-    st.title("🔒 Secure Login - Dostan Coal Company")
-    st.write("Please enter your credentials to access the inspection portal.")
+    st.title("🔒 Dostan Coal Company Portal")
     
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit_button = st.form_submit_button("Login")
-        
-        if submit_button:
-            # DEFAULT CREDENTIALS (Change these later)
-            if username == "admin" and password == "Dostan@123":
-                st.session_state['logged_in'] = True
-                st.rerun()
-            else:
-                st.error("Invalid Username or Password.")
+    # Create Tabs for Login and Registration
+    tab_login, tab_signup = st.tabs(["Sign In", "Create Account"])
     
-    st.stop() # Stops the rest of the code from running if not logged in
+    with tab_login:
+        st.subheader("Login to your account")
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit_login = st.form_submit_button("Login")
+            
+            if submit_login:
+                if authenticate_user(username, password):
+                    st.session_state['logged_in'] = True
+                    st.session_state['current_user'] = username
+                    st.rerun()
+                else:
+                    st.error("Invalid Username or Password.")
+                    
+    with tab_signup:
+        st.subheader("Register a new user")
+        with st.form("signup_form"):
+            new_username = st.text_input("Choose a Username")
+            new_password = st.text_input("Choose a Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            submit_signup = st.form_submit_button("Sign Up")
+            
+            if submit_signup:
+                if new_password != confirm_password:
+                    st.error("Passwords do not match!")
+                elif len(new_password) < 6:
+                    st.error("Password must be at least 6 characters long.")
+                else:
+                    success = create_user(new_username, new_password)
+                    if success:
+                        st.success("Account created successfully! You can now log in using the 'Sign In' tab.")
+                    else:
+                        st.error("Username already exists. Please choose a different one.")
+    
+    st.stop() # Stops the rest of the app from running if not logged in
 
 # -----------------------------------------
 # 4. Main Application Navigation
 # -----------------------------------------
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ["📋 Inspection Form", "📈 Analytics Dashboard", "🗄️ Secure History"])
+st.sidebar.title(f"Welcome, {st.session_state['current_user']}")
+page = st.sidebar.radio("Navigation Menu:", ["📋 Inspection Form", "📈 Analytics Dashboard", "🗄️ Secure History"])
 
 # Logout Button
 if st.sidebar.button("Log Out"):
     st.session_state['logged_in'] = False
+    st.session_state['current_user'] = ""
     st.rerun()
 
 # -----------------------------------------
@@ -252,7 +321,7 @@ if page == "📋 Inspection Form":
         with col1:
             mine_name = st.text_input("Mine Name", value="Dostan Coal Company")
             manager_permit = st.text_input("Manager Permit Number")
-            inspector = st.text_input("Inspector Name")
+            inspector = st.text_input("Inspector Name", value=st.session_state['current_user'])
         with col2:
             inspection_date = st.date_input("Inspection Date", datetime.today())
             shift = st.selectbox("Shift", ["Morning", "Evening", "Night"])
@@ -436,7 +505,6 @@ elif page == "📈 Analytics Dashboard":
 
         # --- Chart 1: Production ---
         st.subheader("📊 Coal Production Trend (Daily Basis)")
-        # Group by date for daily analytics
         prod_data = df.groupby('date')['prod_per_day'].sum()
         st.bar_chart(prod_data, color="#2E86C1")
         
@@ -458,28 +526,31 @@ elif page == "📈 Analytics Dashboard":
         st.info("No data available yet. Please submit an inspection form first to generate graphs.")
 
 # -----------------------------------------
-# Page 3: Secure History Archive
+# Page 3: Secure History Archive & PDF Viewer
 # -----------------------------------------
 elif page == "🗄️ Secure History":
     st.title("Secure Reports Archive")
-    st.write("View past inspections and regenerate PDF reports.")
+    st.write("View past inspections and open PDF reports.")
     
     df_history = load_history_data()
     
     if not df_history.empty:
-        # Show data table without the JSON column to keep it clean
+        # Show data table for reference
         st.dataframe(df_history[['date', 'shift', 'mine_name', 'inspector', 'prod_per_day']], use_container_width=True)
         
         st.divider()
-        st.subheader("Re-Download Past Reports")
+        st.subheader("Open a Past Report")
         
-        # Dropdown to select a past report
-        report_options = df_history.apply(lambda x: f"{x['date']} | {x['shift']} Shift | {x['inspector']} (ID: {x['id']})", axis=1).tolist()
-        selected_report = st.selectbox("Select a previous report to download:", report_options)
+        # Format a clean list of filenames for the user to click/select
+        report_filenames = ["-- Select a File to Open --"] + df_history.apply(
+            lambda x: f"Mine_Report_{x['date']}_{x['shift']}.pdf (ID: {x['id']})", axis=1
+        ).tolist()
         
-        if selected_report:
-            # Extract ID from selection
-            selected_id = int(selected_report.split("(ID: ")[1].replace(")", ""))
+        selected_file = st.selectbox("Click a file name to open it:", report_filenames)
+        
+        if selected_file != "-- Select a File to Open --":
+            # Extract ID from the selected filename text
+            selected_id = int(selected_file.split("(ID: ")[1].replace(")", ""))
             
             # Fetch the specific JSON data for that report
             json_str = df_history.loc[df_history['id'] == selected_id, 'full_report_json'].values[0]
@@ -488,11 +559,17 @@ elif page == "🗄️ Secure History":
             # Recreate PDF
             recreated_pdf_bytes = generate_pdf(report_data_dict)
             
+            # Download Button
             st.download_button(
-                label=f"📄 Re-Download PDF for {report_data_dict['date']}",
+                label=f"⬇️ Download {selected_file.split(' (ID:')[0]}",
                 data=recreated_pdf_bytes,
-                file_name=f"Archived_Report_{report_data_dict['date']}.pdf",
+                file_name=selected_file.split(" (ID:")[0],
                 mime="application/pdf"
             )
+            
+            st.write("### Document Preview:")
+            # Display PDF directly in the app
+            display_pdf(recreated_pdf_bytes)
+
     else:
         st.info("No past reports found in the secure database.")
