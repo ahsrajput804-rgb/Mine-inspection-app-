@@ -1,0 +1,166 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+
+const inspectionSections = [
+  {
+    title: "Basic Details",
+    fields: ["Mine Name", "Manager Permit Number"]
+  },
+  {
+    title: "Gases Portion",
+    fields: ["CH4 (%)", "CO (ppm)", "H2S (ppm)", "Oxygen (%)", "Temperature (°C)"]
+  },
+  {
+    title: "Ventilation Portion",
+    fields: ["Moisture", "Fans", "Exhaust", "Type of Ventilation", "Spontaneous Combustion Symptoms", "Fire Stopping", "Brattice Cloth"]
+  },
+  {
+    title: "Mechanical Portion",
+    fields: ["Engine Performance", "Type of Engine", "Last Mobile Oil Change Date", "Rope Condition", "Gear", "Fences at Moving Parts", "Cross-Section", "Drum", "Hissa"]
+  },
+  {
+    title: "Incline Portion",
+    fields: ["Track Line", "Signals & Rope", "Rollers & Pulleys", "Pedestrian Ways", "Side Fence / Rope", "Refuge Holes", "Support System & Leggings", "Direction & Grade"]
+  },
+  {
+    title: "Coal Galleries Portion",
+    fields: ["Leggings & Roof Condition", "Timbers Support Type & Condition", "Dust Level", "Goaves Areas", "Total Levels", "Production per Day (Tons)", "Swampy Condition"]
+  },
+  {
+    title: "Water Drainage",
+    fields: ["Pumps & HP", "Drainage Amount", "Backups Available", "Delivery Pipes Dia"]
+  },
+  {
+    title: "Electrical Portion",
+    fields: ["Cables (mm)", "Earth Breakers", "Floatless Relay", "Buzzer Alarm", "Panel Board Condition (Zero Point)", "Total Load (Amps)", "Voltage at Mine", "Earthing Condition"]
+  },
+  {
+    title: "Safety PPEs",
+    fields: ["Helmet", "Ear Muff / Plugs", "Dust Mask", "Shoes", "Gloves", "Glasses"]
+  },
+  {
+    title: "General Safety & Welfare",
+    fields: ["Rat Hole Mining Check", "Under 18 Workers Check", "Crippled Worker Check", "Drinking Water", "First Aid", "Stretcher", "Dispenser", "Ambulance", "Welfare"]
+  },
+  {
+    title: "Penalties & Fines",
+    fields: ["Penalties and Fines Issued"]
+  }
+];
+
+export default function Home() {
+  const [formData, setFormData] = useState({});
+  const [savedLogs, setSavedLogs] = useState([]);
+
+  useEffect(() => {
+    const existing = localStorage.getItem("mine_inspections");
+    if (existing) setSavedLogs(JSON.parse(existing));
+  }, []);
+
+  const handleChange = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveAndDownload = (e) => {
+    e.preventDefault();
+
+    const timestamp = new Date().toLocaleString();
+    const newRecord = { id: Date.now(), date: timestamp, data: formData };
+    const updatedLogs = [newRecord, ...savedLogs];
+
+    setSavedLogs(updatedLogs);
+    localStorage.setItem("mine_inspections", JSON.stringify(updatedLogs));
+
+    // PDF Generation Logic
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text("Daily Underground Coal Mine Inspection Report", 14, 18);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${timestamp}`, 14, 25);
+    doc.text(
+      `Mine Name: ${formData["Mine Name"] || "N/A"} | Permit No: ${formData["Manager Permit Number"] || "N/A"}`,
+      14,
+      31
+    );
+
+    const tableRows = [];
+    inspectionSections.forEach((sec) => {
+      tableRows.push([
+        {
+          content: sec.title,
+          colSpan: 2,
+          styles: { fillColor: [44, 62, 80], textColor: [255, 255, 255], fontStyle: "bold" }
+        }
+      ]);
+      sec.fields.forEach((field) => {
+        tableRows.push([field, formData[field] || "Satisfactory / Nil"]);
+      });
+    });
+
+    autoTable(doc, {
+      startY: 36,
+      head: [["Inspection Parameter", "Observation / Reading"]],
+      body: tableRows,
+      theme: "grid",
+      styles: { fontSize: 8.5 },
+      headStyles: { fillColor: [30, 41, 59] }
+    });
+
+    const fileName = `${(formData["Mine Name"] || "Mine").replace(/\s+/g, "_")}_Inspection_${Date.now()}.pdf`;
+    doc.save(fileName);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 p-4 max-w-2xl mx-auto font-sans">
+      <header className="bg-slate-800 text-white p-4 rounded-lg mb-6 shadow-md">
+        <h1 className="text-xl font-bold">Underground Coal Mine Inspection</h1>
+        <p className="text-xs text-slate-300">Daily Digital Logbook & PDF Generator</p>
+      </header>
+
+      <form onSubmit={handleSaveAndDownload} className="space-y-6">
+        {inspectionSections.map((sec, i) => (
+          <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+            <h2 className="font-bold text-slate-800 mb-3 border-b pb-1 text-base">{sec.title}</h2>
+            <div className="space-y-3">
+              {sec.fields.map((field, j) => (
+                <div key={j} className="flex flex-col">
+                  <label className="text-xs font-semibold text-slate-600 mb-1">{field}</label>
+                  <input
+                    type="text"
+                    onChange={(e) => handleChange(field, e.target.value)}
+                    placeholder="Enter status or value"
+                    className="border border-slate-300 rounded p-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <button
+          type="submit"
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-lg shadow-md transition text-base"
+        >
+          Save Record & Download PDF Report
+        </button>
+      </form>
+
+      {savedLogs.length > 0 && (
+        <div className="mt-8 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+          <h2 className="font-bold text-slate-800 mb-2 text-sm">On-Device History ({savedLogs.length})</h2>
+          <ul className="divide-y text-xs text-slate-600">
+            {savedLogs.map((log) => (
+              <li key={log.id} className="py-2 flex justify-between items-center">
+                <span className="font-medium text-slate-700">{log.data["Mine Name"] || "Unnamed Mine"}</span>
+                <span className="text-slate-400">{log.date}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+  }
