@@ -17,16 +17,16 @@ class MinePDF(FPDF):
         except Exception:
             pass # Skips logo if not found without throwing error
 
-        # Document Header Title
-        self.set_font("helvetica", "B", 13)
-        self.cell(0, 8, "DAILY UNDERGROUND MINE INSPECTION REPORT", align="C", ln=True)
-        self.set_font("helvetica", "I", 8)
-        self.cell(0, 4, "Statutory Operational & Safety Compliance Log", align="C", ln=True)
+        # Main Header & Subheader in Times New Roman
+        self.set_font("Times", "B", 14)
+        self.cell(0, 7, "Dostan Coal Company Darra Adam Khail, KPK", align="C", ln=True)
+        self.set_font("Times", "B", 11)
+        self.cell(0, 5, "Daily Mine Inspection report", align="C", ln=True)
         self.ln(6)
 
     def footer(self):
         self.set_y(-12)
-        self.set_font("helvetica", "I", 8)
+        self.set_font("Times", "I", 8)
         self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
 
 def generate_pdf(data):
@@ -35,18 +35,18 @@ def generate_pdf(data):
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Helper function to render section headings
+    # Helper function for Times New Roman section headings
     def section_header(title):
-        pdf.set_font("helvetica", "B", 11)
+        pdf.set_font("Times", "B", 11)
         pdf.set_fill_color(230, 230, 230)
         pdf.cell(0, 6, f"  {title}", ln=True, fill=True)
         pdf.ln(2)
 
-    # Helper function to print key-value pairs
+    # Helper function for key-value pairs in Times New Roman
     def print_row(label, value, is_full_width=False):
-        pdf.set_font("helvetica", "B", 9)
+        pdf.set_font("Times", "B", 9)
         pdf.cell(50 if not is_full_width else 60, 5, f"{label}:", border=False)
-        pdf.set_font("helvetica", "", 9)
+        pdf.set_font("Times", "", 9)
         pdf.cell(0, 5, str(value), ln=True)
 
     # 1. Mine Metadata & General Info
@@ -169,7 +169,7 @@ with st.form("full_mine_inspection_form"):
     
     # Section 1: General Info
     st.header("1. General & Manager Details")
-    mine_name = st.text_input("Mine Name")
+    mine_name = st.text_input("Mine Name", value="Dostan Coal Company")
     manager_permit = st.text_input("Manager Permit Number")
     inspector = st.text_input("Inspector Name")
     inspection_date = st.date_input("Inspection Date", datetime.today())
@@ -374,4 +374,4 @@ if submitted:
             data=pdf_bytes,
             file_name=f"Mine_Report_{mine_name}_{inspection_date}.pdf",
             mime="application/pdf"
-        )
+    )
