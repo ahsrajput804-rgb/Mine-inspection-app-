@@ -1,11 +1,66 @@
 import streamlit as st
 import pandas as pd
-import os
+import sqlite3
+import json
 from datetime import datetime
 from fpdf import FPDF
 
 # -----------------------------------------
-# 1. Custom PDF Class with Header & Border
+# 1. Database Initialization
+# -----------------------------------------
+DB_FILE = "mine_secure_history.db"
+
+def init_db():
+    """Creates a secure SQLite database table if it doesn't exist."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS inspections
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  date TEXT,
+                  shift TEXT,
+                  mine_name TEXT,
+                  inspector TEXT,
+                  prod_per_day REAL,
+                  ch4 REAL,
+                  co REAL,
+                  temperature REAL,
+                  full_report_json TEXT)''')
+    conn.commit()
+    conn.close()
+
+def save_report_to_db(data):
+    """Saves the submitted report to the secure database."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Save the key metrics for analytics, and the full dictionary as JSON for PDF recreation
+    c.execute('''INSERT INTO inspections 
+                 (date, shift, mine_name, inspector, prod_per_day, ch4, co, temperature, full_report_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+                 (data['date'], data['shift'], data['mine_name'], data['inspector'], 
+                  data['prod_per_day'], data['ch4'], data['co'], data['temperature'], 
+                  json.dumps(data)))
+    conn.commit()
+    conn.close()
+
+def load_analytics_data():
+    """Loads specific columns for the analytics dashboard."""
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT date, shift, prod_per_day, ch4, co, temperature FROM inspections ORDER BY date", conn)
+    conn.close()
+    return df
+
+def load_history_data():
+    """Loads all records for the history log."""
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT id, date, shift, mine_name, inspector, prod_per_day, full_report_json FROM inspections ORDER BY date DESC", conn)
+    conn.close()
+    return df
+
+# Initialize the database on startup
+init_db()
+
+# -----------------------------------------
+# 2. Custom PDF Class
 # -----------------------------------------
 class MinePDF(FPDF):
     def header(self):
@@ -146,18 +201,46 @@ def generate_pdf(data):
     return bytes(pdf.output())
 
 # -----------------------------------------
-# 2. Page Configuration & Navigation
+# 3. Security / Login System
 # -----------------------------------------
 st.set_page_config(page_title="Mine Management Portal", layout="wide")
 
-# File to store persistent data
-DATA_FILE = "mine_data.csv"
+# Check if user is logged in
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
 
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ["📋 Inspection Form", "📈 Analytics Dashboard"])
+if not st.session_state['logged_in']:
+    st.title("🔒 Secure Login - Dostan Coal Company")
+    st.write("Please enter your credentials to access the inspection portal.")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit_button = st.form_submit_button("Login")
+        
+        if submit_button:
+            # DEFAULT CREDENTIALS (Change these later)
+            if username == "admin" and password == "Dostan@123":
+                st.session_state['logged_in'] = True
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password.")
+    
+    st.stop() # Stops the rest of the code from running if not logged in
 
 # -----------------------------------------
-# 3. Inspection Form Page
+# 4. Main Application Navigation
+# -----------------------------------------
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to:", ["📋 Inspection Form", "📈 Analytics Dashboard", "🗄️ Secure History"])
+
+# Logout Button
+if st.sidebar.button("Log Out"):
+    st.session_state['logged_in'] = False
+    st.rerun()
+
+# -----------------------------------------
+# Page 1: Inspection Form
 # -----------------------------------------
 if page == "📋 Inspection Form":
     st.title("Daily Underground Mine Inspection")
@@ -287,7 +370,7 @@ if page == "📋 Inspection Form":
         welfare = st.text_input("Welfare Facilities Condition", value="Rest shelter available")
         penalties_fines = st.text_input("Penalties & Fines Outstanding/Recent", value="Nil")
 
-        submitted = st.form_submit_button("Submit & Save Report")
+        submitted = st.form_submit_button("Submit & Save Secure Report")
 
     # Handle Submission
     if submitted:
@@ -319,17 +402,11 @@ if page == "📋 Inspection Form":
                 "welfare": welfare, "penalties_fines": penalties_fines
             }
             
-            # Save data to CSV
-            df_new = pd.DataFrame([report_data])
-            if not os.path.isfile(DATA_FILE):
-                df_new.to_csv(DATA_FILE, index=False)
-            else:
-                df_new.to_csv(DATA_FILE, mode='a', header=False, index=False)
-
-            # Generate PDF
+            # Save data to Secure SQLite Database
+            save_report_to_db(report_data)
             pdf_bytes = generate_pdf(report_data)
             
-            st.success("Report Saved to Database & PDF Generated!")
+            st.success("✅ Report securely saved to database!")
             st.download_button(
                 label="📄 Download Full PDF Report",
                 data=pdf_bytes,
@@ -338,18 +415,15 @@ if page == "📋 Inspection Form":
             )
 
 # -----------------------------------------
-# 4. Analytics Dashboard Page
+# Page 2: Analytics Dashboard
 # -----------------------------------------
 elif page == "📈 Analytics Dashboard":
     st.title("Mine Performance & Safety Analytics")
     
-    if os.path.exists(DATA_FILE):
-        # Load the saved reports
-        df = pd.read_csv(DATA_FILE)
-        
-        # Sort by date
+    df = load_analytics_data()
+    
+    if not df.empty:
         df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date')
         
         # --- Top Level Metrics ---
         st.subheader("Key Performance Indicators (Overall)")
@@ -361,28 +435,64 @@ elif page == "📈 Analytics Dashboard":
         st.divider()
 
         # --- Chart 1: Production ---
-        st.subheader("Coal Production Trend (Tons per Day)")
-        # Group by date to handle multiple shifts on the same day
+        st.subheader("📊 Coal Production Trend (Daily Basis)")
+        # Group by date for daily analytics
         prod_data = df.groupby('date')['prod_per_day'].sum()
-        st.bar_chart(prod_data)
+        st.bar_chart(prod_data, color="#2E86C1")
         
         st.divider()
 
         # --- Chart 2: Gases Monitoring ---
-        st.subheader("Hazardous Gases Monitoring (Max Levels Recorded)")
+        st.subheader("⚠️ Hazardous Gases Monitoring (Max Levels)")
         gas_data = df.groupby('date')[['ch4', 'co']].max()
-        st.line_chart(gas_data)
+        st.line_chart(gas_data, color=["#E74C3C", "#F1C40F"])
         
         st.divider()
 
         # --- Chart 3: Temperature ---
-        st.subheader("Mine Temperature Trend (°C)")
+        st.subheader("🌡️ Mine Temperature Trend (°C)")
         temp_data = df.groupby('date')['temperature'].mean()
-        st.line_chart(temp_data)
+        st.line_chart(temp_data, color="#D35400")
 
-        # --- Data Table ---
-        with st.expander("View Raw Inspection Data"):
-            st.dataframe(df)
-            
     else:
         st.info("No data available yet. Please submit an inspection form first to generate graphs.")
+
+# -----------------------------------------
+# Page 3: Secure History Archive
+# -----------------------------------------
+elif page == "🗄️ Secure History":
+    st.title("Secure Reports Archive")
+    st.write("View past inspections and regenerate PDF reports.")
+    
+    df_history = load_history_data()
+    
+    if not df_history.empty:
+        # Show data table without the JSON column to keep it clean
+        st.dataframe(df_history[['date', 'shift', 'mine_name', 'inspector', 'prod_per_day']], use_container_width=True)
+        
+        st.divider()
+        st.subheader("Re-Download Past Reports")
+        
+        # Dropdown to select a past report
+        report_options = df_history.apply(lambda x: f"{x['date']} | {x['shift']} Shift | {x['inspector']} (ID: {x['id']})", axis=1).tolist()
+        selected_report = st.selectbox("Select a previous report to download:", report_options)
+        
+        if selected_report:
+            # Extract ID from selection
+            selected_id = int(selected_report.split("(ID: ")[1].replace(")", ""))
+            
+            # Fetch the specific JSON data for that report
+            json_str = df_history.loc[df_history['id'] == selected_id, 'full_report_json'].values[0]
+            report_data_dict = json.loads(json_str)
+            
+            # Recreate PDF
+            recreated_pdf_bytes = generate_pdf(report_data_dict)
+            
+            st.download_button(
+                label=f"📄 Re-Download PDF for {report_data_dict['date']}",
+                data=recreated_pdf_bytes,
+                file_name=f"Archived_Report_{report_data_dict['date']}.pdf",
+                mime="application/pdf"
+            )
+    else:
+        st.info("No past reports found in the secure database.")
